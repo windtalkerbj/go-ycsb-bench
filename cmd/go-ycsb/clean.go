@@ -40,7 +40,7 @@ Examples:
 	}
 
 	m.Flags().StringSliceVarP(&propertyFiles, "property_file", "P", nil, "Specify a property file")
-	m.Flags().StringSliceVarP(&propertyValues, "prop", "p", nil, "Specify a property value with name=value")
+	m.Flags().StringArrayVarP(&propertyValues, "prop", "p", nil, "Specify a property value with name=value")
 	m.Flags().StringVar(&tableName, "table", "", "Use the table name instead of the default \""+prop.TableNameDefault+"\"")
 	m.Flags().BoolVar(&cleanConfirm, "confirm", false, "Confirm the clean operation (required to prevent accidental deletion)")
 
