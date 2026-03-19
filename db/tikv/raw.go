@@ -198,3 +198,44 @@ func (db *rawDB) BatchDelete(ctx context.Context, table string, keys []string) e
 	}
 	return db.db.BatchDelete(ctx, rowKeys)
 }
+
+func (db *rawDB) Count(ctx context.Context, table string) (int64, error) {
+	// For TiKV raw mode, we need to scan all keys with the table prefix
+	startKey := db.getRowKey(table, "")
+	endKey := append(startKey, 0xFF, 0xFF, 0xFF, 0xFF) // Create an end boundary
+
+	var count int64
+	const batchSize = 10000
+
+	for {
+		keys, _, err := db.db.Scan(ctx, startKey, endKey, batchSize)
+		if err != nil {
+			return 0, err
+		}
+
+		if len(keys) == 0 {
+			break
+		}
+
+		count += int64(len(keys))
+
+		// Move to next batch
+		if len(keys) < batchSize {
+			// Last batch
+			break
+		}
+
+		// Use last key as new start key for next iteration
+		startKey = append(keys[len(keys)-1], 0x00)
+	}
+
+	return count, nil
+}
+
+func (db *rawDB) Clean(ctx context.Context, table string) error {
+	// For TiKV raw mode, we use DeleteRange to efficiently delete all keys with the table prefix
+	startKey := db.getRowKey(table, "")
+	endKey := append(startKey, 0xFF, 0xFF, 0xFF, 0xFF) // Create an end boundary
+
+	return db.db.DeleteRange(ctx, startKey, endKey)
+}

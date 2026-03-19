@@ -321,3 +321,107 @@ func (db *txnDB) BatchDelete(ctx context.Context, table string, keys []string) e
 	}
 	return tx.Commit(ctx)
 }
+
+func (db *txnDB) Count(ctx context.Context, table string) (int64, error) {
+	// For TiKV txn mode, we use transaction to scan all keys with the table prefix
+	tx, err := db.db.Begin()
+	if err != nil {
+		return 0, err
+	}
+	defer tx.Rollback()
+
+	startKey := db.getRowKey(table, "")
+	endKey := append(startKey, 0xFF, 0xFF, 0xFF, 0xFF) // Create an end boundary
+
+	var count int64
+	const batchSize = 10000
+
+	for {
+		iter, err := tx.Iter(startKey, endKey)
+		if err != nil {
+			return 0, err
+		}
+
+		batchCount := 0
+		for iter.Valid() && batchCount < batchSize {
+			count++
+			batchCount++
+			startKey = append(iter.Key(), 0x00)
+			err = iter.Next()
+			if err != nil {
+				iter.Close()
+				return 0, err
+			}
+		}
+
+		iter.Close()
+
+		if batchCount < batchSize {
+			// Last batch
+			break
+		}
+	}
+
+	return count, nil
+}
+
+func (db *txnDB) Clean(ctx context.Context, table string) error {
+	// For TiKV txn mode, we need to delete all keys in batches
+	startKey := db.getRowKey(table, "")
+	endKey := append(startKey, 0xFF, 0xFF, 0xFF, 0xFF) // Create an end boundary
+
+	const batchSize = 10000
+
+	for {
+		tx, err := db.beginTxn()
+		if err != nil {
+			return err
+		}
+
+		iter, err := tx.Iter(startKey, endKey)
+		if err != nil {
+			tx.Rollback()
+			return err
+		}
+
+		keysToDelete := make([][]byte, 0, batchSize)
+		for iter.Valid() && len(keysToDelete) < batchSize {
+			key := append([]byte{}, iter.Key()...)
+			keysToDelete = append(keysToDelete, key)
+			err = iter.Next()
+			if err != nil {
+				iter.Close()
+				tx.Rollback()
+				return err
+			}
+		}
+		iter.Close()
+
+		if len(keysToDelete) == 0 {
+			tx.Rollback()
+			break
+		}
+
+		// Delete all keys in this batch
+		for _, key := range keysToDelete {
+			if err := tx.Delete(key); err != nil {
+				tx.Rollback()
+				return err
+			}
+		}
+
+		if err := tx.Commit(ctx); err != nil {
+			return err
+		}
+
+		// If we deleted fewer keys than batch size, we're done
+		if len(keysToDelete) < batchSize {
+			break
+		}
+
+		// Update startKey for next iteration
+		startKey = append(keysToDelete[len(keysToDelete)-1], 0x00)
+	}
+
+	return nil
+}

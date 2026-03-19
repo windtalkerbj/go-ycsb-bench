@@ -173,3 +173,23 @@ func (db DbWrapper) Analyze(ctx context.Context, table string) error {
 	}
 	return nil
 }
+
+func (db DbWrapper) Count(ctx context.Context, table string) (int64, error) {
+	if countDB, ok := db.DB.(ycsb.CountDB); ok {
+		start := time.Now()
+		count, err := countDB.Count(ctx, table)
+		measure(start, "COUNT", err)
+		return count, err
+	}
+	return 0, fmt.Errorf("database does not implement CountDB interface")
+}
+
+func (db DbWrapper) Clean(ctx context.Context, table string) error {
+	if cleanDB, ok := db.DB.(ycsb.CleanDB); ok {
+		start := time.Now()
+		err := cleanDB.Clean(ctx, table)
+		measure(start, "CLEAN", err)
+		return err
+	}
+	return fmt.Errorf("database does not implement CleanDB interface")
+}

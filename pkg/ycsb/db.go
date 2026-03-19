@@ -102,6 +102,22 @@ type AnalyzeDB interface {
 	Analyze(ctx context.Context, table string) error
 }
 
+// CountDB is the interface for the DB that can count keys in a table.
+type CountDB interface {
+	// Count returns the number of keys in the table.
+	// This method should be implemented efficiently for each database.
+	// table: The name of the table.
+	Count(ctx context.Context, table string) (int64, error)
+}
+
+// CleanDB is the interface for the DB that can clean/delete all keys in a table.
+type CleanDB interface {
+	// Clean deletes all keys in the table.
+	// This method should be implemented efficiently for each database.
+	// table: The name of the table.
+	Clean(ctx context.Context, table string) error
+}
+
 var dbCreators = map[string]DBCreator{}
 
 // RegisterDBCreator registers a creator for the database
