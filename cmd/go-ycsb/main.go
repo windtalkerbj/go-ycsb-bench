@@ -21,6 +21,7 @@ import (
 	_ "net/http/pprof"
 	"os"
 	"os/signal"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -107,6 +108,16 @@ func initialGlobal(dbName string, onProperties func()) {
 		}
 		globalProps.Set(seps[0], seps[1])
 	}
+
+	// Check if using workloadf and set a flag for prometheus metrics
+	isWorkloadF := false
+	for _, pf := range propertyFiles {
+		if strings.Contains(pf, "workloadf") {
+			isWorkloadF = true
+			break
+		}
+	}
+	globalProps.Set("_workloadf", strconv.FormatBool(isWorkloadF))
 
 	if onProperties != nil {
 		onProperties()

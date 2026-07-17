@@ -8,6 +8,14 @@ vendor
 tool/tool
 .DS_Store
 
+# local test artifacts
+backups/
+research/
+nohup.out
+*.bak
+ctl-engine-info-log/
+/go-ycsb
+
 # percentile output format
 *.txt
 

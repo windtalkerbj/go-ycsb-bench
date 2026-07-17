@@ -33,8 +33,10 @@ func newCleanCommand() *cobra.Command {
 This is a destructive operation and cannot be undone.
 
 Examples:
-  go-ycsb clean tikv -p tikv.pd=127.0.0.1:2379 -p tikv.type=raw --table usertable --confirm
-  go-ycsb clean tikv -p tikv.pd=127.0.0.1:2379 -p tikv.type=txn --table usertable --confirm`,
+  go-ycsb clean tikv -p tikv.pd=127.0.0.1:2379 -p tikv.type=raw -p tikv.apiversion=V2 --table usertable --confirm
+  go-ycsb clean tikv -p tikv.pd=127.0.0.1:2379 -p tikv.type=txn --table usertable --confirm
+
+For TiKV raw mode, tikv.apiversion is required (V1 or V2).`,
 		Args: cobra.MinimumNArgs(1),
 		Run:  runCleanCommandFunc,
 	}
@@ -50,6 +52,18 @@ Examples:
 func runCleanCommandFunc(cmd *cobra.Command, args []string) {
 	dbName := args[0]
 	initialGlobal(dbName, nil)
+
+	// Validate tikv.apiversion for TiKV raw mode
+	if dbName == "tikv" {
+		tikvType := globalProps.GetString("tikv.type", "raw")
+		if tikvType == "raw" {
+			if _, ok := globalProps.Get("tikv.apiversion"); !ok {
+				fmt.Println("ERROR: Missing required parameter '-p tikv.apiversion' for TiKV raw mode.")
+				fmt.Println("Please specify the API version: -p tikv.apiversion=V1 or -p tikv.apiversion=V2")
+				return
+			}
+		}
+	}
 
 	fmt.Println("***************** properties *****************")
 	for key, value := range globalProps.Map() {

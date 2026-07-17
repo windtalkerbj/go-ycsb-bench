@@ -28,6 +28,12 @@ const (
 	tikvConnCount  = "tikv.conncount"
 	tikvBatchSize  = "tikv.batchsize"
 	tikvAPIVersion = "tikv.apiversion"
+	// update 模式：getput（默认，Get+Put 两次 RPC）| cas（Read 缓存 + CompareAndSwap，RMW 省一次 RPC）
+	tikvUpdateMode = "tikv.updatemode"
+	// TLS options
+	tikvClusterSSLCA   = "tikv.cluster-ssl-ca"
+	tikvClusterSSLCert = "tikv.cluster-ssl-cert"
+	tikvClusterSSLKey  = "tikv.cluster-ssl-key"
 )
 
 type tikvCreator struct {
@@ -37,6 +43,15 @@ func (c tikvCreator) Create(p *properties.Properties) (ycsb.DB, error) {
 	config.UpdateGlobal(func(c *config.Config) {
 		c.TiKVClient.GrpcConnectionCount = p.GetUint(tikvConnCount, 128)
 		c.TiKVClient.MaxBatchSize = p.GetUint(tikvBatchSize, 128)
+		if ca := p.GetString(tikvClusterSSLCA, ""); ca != "" {
+			c.Security.ClusterSSLCA = ca
+		}
+		if cert := p.GetString(tikvClusterSSLCert, ""); cert != "" {
+			c.Security.ClusterSSLCert = cert
+		}
+		if key := p.GetString(tikvClusterSSLKey, ""); key != "" {
+			c.Security.ClusterSSLKey = key
+		}
 	})
 
 	tp := p.GetString(tikvType, "raw")

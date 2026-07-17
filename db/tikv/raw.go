@@ -24,12 +24,24 @@ import (
 	"github.com/pingcap/go-ycsb/pkg/ycsb"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/tikv/client-go/v2/rawkv"
+	"github.com/tikv/client-go/v2/config"
 )
 
 type rawDB struct {
 	db      *rawkv.Client
 	r       *util.RowCodec
 	bufPool *util.BufPool
+	casMode bool
+}
+
+type contextKey string
+
+const stateKey = contextKey("tikvRawDB")
+
+// rawDBState 记录该线程最近一次 Read 的原始行，供 CAS 模式的 Update 做 previousValue
+type rawDBState struct {
+	key string // getRowKey(table, key) 的结果
+	row []byte // Read 返回的原始编码行
 }
 
 func createRawDB(p *properties.Properties) (ycsb.DB, error) {
@@ -40,9 +52,17 @@ func createRawDB(p *properties.Properties) (ycsb.DB, error) {
 		return nil, errors.Errorf("Invalid tikv apiversion %s.", apiVersionStr)
 	}
 	db, err := rawkv.NewClientWithOpts(context.Background(), strings.Split(pdAddr, ","),
-		rawkv.WithAPIVersion(kvrpcpb.APIVersion(apiVersion)))
+		rawkv.WithAPIVersion(kvrpcpb.APIVersion(apiVersion)),
+		rawkv.WithSecurity(config.GetGlobalConfig().Security))
 	if err != nil {
 		return nil, err
+	}
+
+	casMode := strings.ToLower(p.GetString(tikvUpdateMode, "getput")) == "cas"
+	if casMode {
+		// 注意：atomic 模式下所有写请求都带 ForCas 标记（单行事务路径），
+		// 与非 atomic 写入混用会破坏线性一致性，仅用于独立压测环境
+		db.SetAtomicForCAS(true)
 	}
 
 	bufPool := util.NewBufPool()
@@ -51,6 +71,7 @@ func createRawDB(p *properties.Properties) (ycsb.DB, error) {
 		db:      db,
 		r:       util.NewRowCodec(p),
 		bufPool: bufPool,
+		casMode: casMode,
 	}, nil
 }
 
@@ -59,7 +80,7 @@ func (db *rawDB) Close() error {
 }
 
 func (db *rawDB) InitThread(ctx context.Context, _ int, _ int) context.Context {
-	return ctx
+	return context.WithValue(ctx, stateKey, &rawDBState{})
 }
 
 func (db *rawDB) CleanupThread(ctx context.Context) {
@@ -70,11 +91,19 @@ func (db *rawDB) getRowKey(table string, key string) []byte {
 }
 
 func (db *rawDB) Read(ctx context.Context, table string, key string, fields []string) (map[string][]byte, error) {
-	row, err := db.db.Get(ctx, db.getRowKey(table, key))
+	rowKey := db.getRowKey(table, key)
+	row, err := db.db.Get(ctx, rowKey)
 	if err != nil {
 		return nil, err
 	} else if row == nil {
 		return nil, nil
+	}
+
+	if db.casMode {
+		if state, ok := ctx.Value(stateKey).(*rawDBState); ok {
+			state.key = string(rowKey)
+			state.row = row
+		}
 	}
 
 	return db.r.Decode(row, fields)
@@ -125,9 +154,46 @@ func (db *rawDB) Scan(ctx context.Context, table string, startKey string, count 
 }
 
 func (db *rawDB) Update(ctx context.Context, table string, key string, values map[string][]byte) error {
-	row, err := db.db.Get(ctx, db.getRowKey(table, key))
+	rowKey := db.getRowKey(table, key)
+
+	// CAS 模式：若本次 Update 命中同线程 Read 缓存的行，直接 CompareAndSwap，
+	// 省掉一次 Get（workloadf 的 RMW 从 3 次 RPC 降为 2 次）；冲突则回退经典 Get+Put
+	if db.casMode {
+		if state, ok := ctx.Value(stateKey).(*rawDBState); ok && state.row != nil && state.key == string(rowKey) {
+			prevRow := state.row
+			state.key = ""
+			state.row = nil
+
+			data, err := db.r.Decode(prevRow, nil)
+			if err != nil {
+				return err
+			}
+			for field, value := range values {
+				data[field] = value
+			}
+
+			buf := db.bufPool.Get()
+			defer func() {
+				db.bufPool.Put(buf)
+			}()
+			buf, err = db.r.Encode(buf, data)
+			if err != nil {
+				return err
+			}
+
+			_, success, err := db.db.CompareAndSwap(ctx, rowKey, prevRow, buf)
+			if err != nil {
+				return err
+			}
+			if success {
+				return nil
+			}
+		}
+	}
+
+	row, err := db.db.Get(ctx, rowKey)
 	if err != nil {
-		return nil
+		return err
 	}
 
 	data, err := db.r.Decode(row, nil)

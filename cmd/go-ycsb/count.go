@@ -38,8 +38,10 @@ func newCountCommand() *cobra.Command {
 This command supports concurrent counting for better performance on large datasets.
 
 Examples:
-  go-ycsb count tikv -P workloads/workloada --threads 10
-  go-ycsb count mysql -p mysql.host=127.0.0.1 -p mysql.db=test --table usertable`,
+  go-ycsb count tikv -P workloads/workloada -p tikv.apiversion=V2 --threads 10
+  go-ycsb count mysql -p mysql.host=127.0.0.1 -p mysql.db=test --table usertable
+
+For TiKV raw mode, tikv.apiversion is required (V1 or V2).`,
 		Args: cobra.MinimumNArgs(1),
 		Run:  runCountCommandFunc,
 	}
@@ -56,6 +58,18 @@ Examples:
 func runCountCommandFunc(cmd *cobra.Command, args []string) {
 	dbName := args[0]
 	initialGlobal(dbName, nil)
+
+	// Validate tikv.apiversion for TiKV raw mode
+	if dbName == "tikv" {
+		tikvType := globalProps.GetString("tikv.type", "raw")
+		if tikvType == "raw" {
+			if _, ok := globalProps.Get("tikv.apiversion"); !ok {
+				fmt.Println("ERROR: Missing required parameter '-p tikv.apiversion' for TiKV raw mode.")
+				fmt.Println("Please specify the API version: -p tikv.apiversion=V1 or -p tikv.apiversion=V2")
+				return
+			}
+		}
+	}
 
 	fmt.Println("***************** properties *****************")
 	for key, value := range globalProps.Map() {

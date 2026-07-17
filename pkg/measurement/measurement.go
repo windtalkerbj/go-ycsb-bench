@@ -15,6 +15,7 @@ package measurement
 
 import (
 	"bufio"
+	"fmt"
 	"os"
 	"sync"
 	"sync/atomic"
@@ -33,6 +34,8 @@ type measurement struct {
 	p *properties.Properties
 
 	measurer ycsb.Measurer
+
+	promeWriter *PrometheusRemoteWriter
 }
 
 func (m *measurement) measure(op string, start time.Time, lan time.Duration) {
@@ -66,6 +69,14 @@ func (m *measurement) output() {
 	err = w.Flush()
 	if err != nil {
 		panic("failed to flush output: " + err.Error())
+	}
+
+	if m.promeWriter != nil {
+		go func() {
+			if err := m.promeWriter.WriteMetrics(); err != nil {
+				fmt.Fprintf(os.Stderr, "failed to push metrics to Prometheus: %v\n", err)
+			}
+		}()
 	}
 }
 
@@ -120,6 +131,16 @@ func IsWarmUpFinished() bool {
 func Measure(op string, start time.Time, lan time.Duration) {
 	if IsWarmUpFinished() {
 		globalMeasure.measure(op, start, lan)
+	}
+}
+
+// SetPrometheusConfig sets the Prometheus remote writer config.
+// When configured, measurement outputs will be pushed to Prometheus automatically.
+func SetPrometheusConfig(url, benchNo string) {
+	if globalMeasure != nil {
+		globalMeasure.Lock()
+		globalMeasure.promeWriter = NewPrometheusRemoteWriter(url, benchNo)
+		globalMeasure.Unlock()
 	}
 }
 
